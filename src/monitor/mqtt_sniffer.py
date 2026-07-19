@@ -8,6 +8,7 @@ is capture plumbing, not protocol logic or feature math.
 import logging
 import socket
 import sys
+import time
 
 import yaml
 from scapy.all import IP, TCP, sniff, conf as scapy_conf
@@ -17,6 +18,17 @@ from .flow_tracker import FlowTracker
 from .packet_parser import MalformedPacketError, parse_mqtt_packet
 
 logger = logging.getLogger(__name__)
+
+# real MQTT frames rarely exceed a few hundred bytes on this kind of
+# sensor/telemetry traffic; 8 KB gives generous headroom for a single
+# legitimate frame while still capping how much junk a flooding client
+# can force us to hold in memory before we give up on it
+MAX_SEGMENT_BUFFER_BYTES = 8192
+
+# how long we'll hold onto a partial (unparsed) segment before assuming
+# the rest of it is never coming and discarding it - prevents buffers
+# from a dead/gone client lingering forever
+SEGMENT_BUFFER_MAX_AGE_SECONDS = 30
 
 
 class MQTTSniffer:
@@ -31,6 +43,9 @@ class MQTTSniffer:
         # can span more than one TCP segment on slow links or with large
         # publish payloads - scapy hands us segments, not reassembled streams
         self._segment_buffers = {}
+        # tracks when each buffer was last touched, so we can evict ones
+        # that never complete (see _evict_stale_buffers)
+        self._buffer_last_touched = {}
         self._on_feature_callback = None
 
     def _load_config(self, config_path: str) -> dict:
@@ -48,6 +63,25 @@ class MQTTSniffer:
         """callback(feature_dict) gets invoked whenever a flow window fills."""
         self._on_feature_callback = callback
 
+    def _evict_stale_buffers(self):
+        """
+        Drop any partial-frame buffers that have been sitting around too
+        long without completing. Without this, a client that starts a
+        frame and never finishes it (dropped connection, deliberate
+        stall) leaves its buffer allocated forever.
+        """
+        now = time.time()
+        stale_keys = [
+            key for key, last_touched in self._buffer_last_touched.items()
+            if (now - last_touched) > SEGMENT_BUFFER_MAX_AGE_SECONDS
+        ]
+        for key in stale_keys:
+            self._segment_buffers.pop(key, None)
+            self._buffer_last_touched.pop(key, None)
+
+        if stale_keys:
+            logger.debug("evicted %d stale reassembly buffer(s)", len(stale_keys))
+
     def _handle_packet(self, packet):
         if IP not in packet or TCP not in packet:
             return
@@ -59,20 +93,44 @@ class MQTTSniffer:
         source_port = packet[TCP].sport
         buffer_key = (source_ip, source_port)
 
+        # periodic housekeeping - cheap to call every packet since it's
+        # just a dict scan over however many partial buffers exist right now
+        self._evict_stale_buffers()
+
         raw_bytes = bytes(packet[TCP].payload)
         # simple reassembly: append to any pending buffer for this flow,
         # since a single scapy-captured segment might be a partial MQTT frame
         combined = self._segment_buffers.pop(buffer_key, b"") + raw_bytes
+        self._buffer_last_touched.pop(buffer_key, None)
+
+        if len(combined) > MAX_SEGMENT_BUFFER_BYTES:
+            # a legitimate MQTT frame from these device profiles never
+            # gets close to this size, so if we're still accumulating
+            # past it, either the parser is stuck on garbage or a client
+            # is deliberately flooding us with fragments - either way,
+            # holding onto it further just risks OOM, so we bail out
+            logger.warning(
+                "reassembly buffer for %s:%d exceeded %d bytes, dropping as malformed",
+                source_ip, source_port, MAX_SEGMENT_BUFFER_BYTES,
+            )
+            client_id = f"unknown@{source_ip}"
+            features = self.flow_tracker.ingest(source_ip, client_id, None, is_malformed=True)
+            if features and self._on_feature_callback:
+                self._on_feature_callback(features)
+            return
 
         try:
             parsed = parse_mqtt_packet(combined)
         except MalformedPacketError as exc:
             # could genuinely be a malformed/malicious frame, or just a
-            # segment boundary we haven't fully reassembled yet - we treat
-            # it as malformed for tracking purposes but don't buffer it
-            # further, since retrying indefinitely on garbage data would
-            # leak memory under a sustained flood attack
+            # segment boundary we haven't fully reassembled yet - since we
+            # can't tell which, we keep the partial data around (bounded by
+            # the size/age limits above) in case the rest arrives next packet,
+            # and also record this as a malformed observation for the flow
             logger.debug("malformed MQTT frame from %s:%d - %s", source_ip, source_port, exc)
+            self._segment_buffers[buffer_key] = combined
+            self._buffer_last_touched[buffer_key] = time.time()
+
             client_id = f"unknown@{source_ip}"
             features = self.flow_tracker.ingest(source_ip, client_id, None, is_malformed=True)
             if features and self._on_feature_callback:
@@ -113,14 +171,20 @@ class MQTTSniffer:
             sys.exit(1)
 
         try:
-            sniff(
-                iface=interface,
-                filter=bpf_filter,
-                prn=self._handle_packet,
-                store=False,
-                promisc=capture_cfg["promiscuous"],
-                timeout=None,
-            )
+            # timeout=None used to mean sniff() could block forever if no
+            # matching traffic showed up - that leaves no way to notice a
+            # dead/hung capture from the outside. a periodic timeout makes
+            # sniff() return every 60s so the loop below can re-enter it;
+            # scapy doesn't expose a "still alive" signal any other way
+            while True:
+                sniff(
+                    iface=interface,
+                    filter=bpf_filter,
+                    prn=self._handle_packet,
+                    store=False,
+                    promisc=capture_cfg["promiscuous"],
+                    timeout=60,
+                )
         except PermissionError:
             logger.error(
                 "permission denied opening raw socket on %s - "
