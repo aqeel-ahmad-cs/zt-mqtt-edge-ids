@@ -9,7 +9,7 @@
 
 ## Abstract
 
-The proliferation of constrained IoT devices communicating over lightweight publish/subscribe protocols such as MQTT has introduced a class of network security problems that traditional perimeter-based defenses are poorly equipped to handle. MQTT brokers are frequently deployed with weak or absent authentication, flat network topologies, and no inherent rate-limiting, which makes them attractive targets for credential brute-forcing, topic-flooding denial-of-service attacks, and malformed-packet exploitation of broker parsers. This project implements a Zero-Trust inspired monitoring and mitigation pipeline that operates directly at the network edge: it passively captures MQTT traffic, derives rolling statistical flow features at the application layer, scores each flow using an unsupervised anomaly detection model, and — upon confident detection of malicious behavior — enforces isolation of the offending host at the kernel firewall level without requiring human intervention.
+The proliferation of constrained IoT devices communicating over lightweight publish/subscribe protocols such as MQTT has introduced a class of network security problems that traditional perimeter-based defenses are poorly equipped to handle. MQTT brokers are frequently deployed with weak or absent authentication, flat network topologies, and no inherent rate limiting, which makes them attractive targets for credential brute-forcing, topic-flooding denial-of-service attacks, and malformed packet exploitation of broker parsers. This project implements a Zero-Trust inspired monitoring and mitigation pipeline that operates directly at the network edge: it passively captures MQTT traffic, derives rolling statistical flow features at the application layer, scores each flow using an unsupervised anomaly detection model, and  upon confident detection of malicious behavior enforces isolation of the offending host at the kernel firewall level without requiring human intervention.
 
 ---
 
@@ -26,13 +26,13 @@ The proliferation of constrained IoT devices communicating over lightweight publ
 
 ### 1.2 Why Zero-Trust at the Edge
 
-Rather than treating the broker as a trusted internal service and the perimeter firewall as the sole control point, this system continuously re-evaluates every client's behavioral profile — connection cadence, topic access patterns, payload size distribution, keep-alive intervals — and treats deviation from an established baseline as sufficient grounds for automated network isolation, independent of whether the client presented valid credentials.
+Rather than treating the broker as a trusted internal service and the perimeter firewall as the sole control point, this system continuously re-evaluates every client's behavioral profile connection cadence, topic access patterns, payload size distribution, keep-alive intervals and treats deviation from an established baseline as sufficient grounds for automated network isolation, independent of whether the client presented valid credentials.
 
 ### 1.3 Design Constraints
 
-- **No line-rate DPI ASICs available** — capture and parsing must be efficient enough to run on a single ARM Cortex-A72 core without dropping packets under moderate load.
-- **No cloud round-trip for detection** — inference must complete locally within the flow window.
-- **No supervised attack labels assumed in production** — the primary detector must generalize to attack patterns not present in any training set, which is why Isolation Forest (unsupervised) is the default rather than a classifier.
+- **No line-rate DPI ASICs available** : capture and parsing must be efficient enough to run on a single ARM Cortex-A72 core without dropping packets under moderate load.
+- **No cloud round-trip for detection** : inference must complete locally within the flow window.
+- **No supervised attack labels assumed in production** : the primary detector must generalize to attack patterns not present in any training set, which is why Isolation Forest (unsupervised) is the default rather than a classifier.
 
 ---
 
@@ -72,10 +72,10 @@ Rather than treating the broker as a trusted internal service and the perimeter 
 
 ### 2.1 Data Flow Summary
 
-1. **Capture** — `mqtt_sniffer.py` attaches to a mirrored/bridge interface and reassembles MQTT frames from raw TCP segments.
-2. **Feature Extraction** — `flow_tracker.py` maintains a bounded rolling window per `(source_ip, client_id)` and emits a 9-dimensional feature vector once the window fills.
-3. **Inference** — `isolation_forest_model.py` scores the vector; anything below the configured threshold for `min_consecutive_flags` windows in a row is treated as an active threat.
-4. **Enforcement** — `firewall_controller.py` installs an `iptables` DROP rule in a dedicated `ZT_MQTT_QUARANTINE` chain, and `quarantine_ledger.py` records the decision with the triggering feature vector for later audit.
+1. **Capture** :`mqtt_sniffer.py` attaches to a mirrored/bridge interface and reassembles MQTT frames from raw TCP segments.
+2. **Feature Extraction** : `flow_tracker.py` maintains a bounded rolling window per `(source_ip, client_id)` and emits a 9-dimensional feature vector once the window fills.
+3. **Inference** : `isolation_forest_model.py` scores the vector; anything below the configured threshold for `min_consecutive_flags` windows in a row is treated as an active threat.
+4. **Enforcement** : `firewall_controller.py` installs an `iptables` DROP rule in a dedicated `ZT_MQTT_QUARANTINE` chain, and `quarantine_ledger.py` records the decision with the triggering feature vector for later audit.
 
 ---
 
@@ -84,8 +84,8 @@ Rather than treating the broker as a trusted internal service and the perimeter 
 - Live MQTT 3.1.1 control-packet parsing directly from TCP payloads (`CONNECT`, `PUBLISH`, `SUBSCRIBE`, and friends), with explicit malformed-frame detection rather than silent drops.
 - Bounded-memory rolling flow statistics, safe for continuous operation on constrained edge hardware.
 - Unsupervised anomaly detection via Isolation Forest, with an interchangeable PyTorch autoencoder backend for nonlinear feature distributions.
-- Automated, auditable mitigation — every firewall action is tied to the feature vector and anomaly score that triggered it.
-- Config-driven policy (`/config`) — thresholds, ACLs, and firewall behaviour are never hardcoded.
+- Automated, auditable mitigation : every firewall action is tied to the feature vector and anomaly score that triggered it.
+- Config-driven policy (`/config`) : thresholds, ACLs, and firewall behaviour are never hardcoded.
 - Full test coverage of the detection and mitigation path using mocks and hand-built MQTT byte frames, runnable without root or a live broker.
 
 ---
@@ -138,7 +138,7 @@ zt-mqtt-edge-ids/
 
 ### 5.1 Prerequisites
 
-- **OS**: Linux (Ubuntu 22.04+ recommended) — `iptables` and raw socket capture require a Linux kernel.
+- **OS**: Linux (Ubuntu 22.04+ recommended) : `iptables` and raw socket capture require a Linux kernel.
 - **Python**: 3.11 or later
 - **Docker & Docker Compose v2**: for the lab MQTT broker
 - **libpcap-dev / tshark**: required by Scapy
@@ -197,8 +197,8 @@ pytest tests/ -v --tb=short
 
 This system detects and mitigates **network and application-layer anomalies observable from traffic metadata and MQTT control-packet structure**. It explicitly does **not**:
 
-- Inspect or decrypt TLS-secured MQTT (8883) traffic — only unencrypted (1883) deployments or environments with a TLS-terminating proxy are in scope.
-- Replace broker-side authentication — it is a complementary detection layer.
+- Inspect or decrypt TLS-secured MQTT (8883) traffic : only unencrypted (1883) deployments or environments with a TLS-terminating proxy are in scope.
+- Replace broker-side authentication : it is a complementary detection layer.
 - Guarantee detection of a sufficiently low-and-slow attack that stays within the statistical envelope of the trained baseline; this is an inherent limitation of unsupervised anomaly detection.
 
 ---
@@ -211,13 +211,13 @@ MIT License. See [LICENSE](LICENSE).
 
 ## 8. Implementation Status
 
-- [x] `src/monitor` — packet sniffing engine, MQTT frame parser, and rolling flow statistics
-- [x] `src/engine` — feature preprocessing, Isolation Forest detector, optional PyTorch autoencoder
-- [x] `src/mitigation` — iptables-based firewall controller and persistent quarantine ledger
-- [x] `src/edge_node.py` — orchestrator wiring the three subsystems together
-- [x] `tests/` — unit tests plus three attack/traffic simulators
-- [x] `config/` — network, MQTT ACL, and firewall rule configuration
-- [x] `scripts/evaluate_detector.py` — precision/recall/F1 evaluation against labeled synthetic traffic
+- [x] `src/monitor` : packet sniffing engine, MQTT frame parser, and rolling flow statistics
+- [x] `src/engine` : feature preprocessing, Isolation Forest detector, optional PyTorch autoencoder
+- [x] `src/mitigation` : iptables-based firewall controller and persistent quarantine ledger
+- [x] `src/edge_node.py` : orchestrator wiring the three subsystems together
+- [x] `tests/` : unit tests plus three attack/traffic simulators
+- [x] `config/` : network, MQTT ACL, and firewall rule configuration
+- [x] `scripts/evaluate_detector.py` : precision/recall/F1 evaluation against labeled synthetic traffic
 
 ## 9. Detection Performance
 
@@ -231,7 +231,7 @@ generated by the simulators in `tests/attack_simulators/`, using `scripts/evalua
 | -0.050 | 0.993 | 0.705 | 0.825 | 0.2% |
 
 The threshold in `config/network_config.yaml` was set by sweeping this range and picking the
-best F1 tradeoff rather than an arbitrary guess — an earlier default of `-0.15` produced 0%
+best F1 tradeoff rather than an arbitrary guess  an earlier default of `-0.15` produced 0%
 recall on this same dataset, because the actual score separation between benign and attack
 windows sits much closer to zero than that value assumed. This is a concrete example of why
 threshold choices need empirical justification rather than intuition: re-run
@@ -246,8 +246,8 @@ performance against attack patterns not represented in `tests/attack_simulators/
 
 The three subsystems (`src/monitor`, `src/engine`, `src/mitigation`) are separate Python
 modules with no shared global state, composed in-process by `src/edge_node.py` rather than
-run as independent services connected over a message queue. For a single-node edge gateway —
-the deployment target this project is scoped to — an in-process pipeline avoids the added
+run as independent services connected over a message queue. For a single-node edge gateway
+the deployment target this project is scoped to an in-process pipeline avoids the added
 latency, serialization overhead, and additional failure surface (queue broker uptime, message
 schema versioning) that a distributed pub/sub split would introduce, at the cost of not being
 horizontally scalable across multiple gateways. If this system needed to run across a fleet of
@@ -263,4 +263,4 @@ pip install -r requirements.txt
 pytest tests/ -v
 ```
 
-All tests run without root privileges and without a live broker — the firewall and capture layers are exercised through mocks and hand-constructed MQTT byte payloads.
+All tests run without root privileges and without a live broker  the firewall and capture layers are exercised through mocks and hand-constructed MQTT byte payloads.
