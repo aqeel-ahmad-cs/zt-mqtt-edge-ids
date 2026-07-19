@@ -97,6 +97,76 @@ class TestFirewallControllerQuarantine:
             mock_run.assert_not_called()
 
 
+class TestFirewallControllerListQuarantinedIps:
+    @patch("subprocess.run")
+    def test_negated_rule_is_excluded(self, mock_run):
+        # a negated source ("-s ! 10.0.0.0/24") means "everything except
+        # this range" - it is not an IP we quarantined and must not show
+        # up in the returned list
+        fake_iptables_output = (
+            "-N ZT_MQTT_QUARANTINE\n"
+            "-A ZT_MQTT_QUARANTINE -s 192.168.1.100/32 -j DROP\n"
+            "-A ZT_MQTT_QUARANTINE -s ! 10.0.0.0/24 -j DROP\n"
+        )
+        mock_run.side_effect = [
+            _mock_success(),
+            _mock_success(),
+            subprocess.CompletedProcess([], returncode=0, stdout=fake_iptables_output, stderr=""),
+        ]
+        controller = FirewallController(dry_run=False)
+        ips = controller.list_quarantined_ips()
+
+        assert "192.168.1.100/32" in ips
+        assert "10.0.0.0/24" not in ips
+        assert len(ips) == 1
+
+    @patch("subprocess.run")
+    def test_valid_cidr_rules_are_included(self, mock_run):
+        fake_iptables_output = (
+            "-N ZT_MQTT_QUARANTINE\n"
+            "-A ZT_MQTT_QUARANTINE -s 192.168.1.100/32 -j DROP\n"
+            "-A ZT_MQTT_QUARANTINE -s 172.28.0.55/32 -j DROP\n"
+        )
+        mock_run.side_effect = [
+            _mock_success(),
+            _mock_success(),
+            subprocess.CompletedProcess([], returncode=0, stdout=fake_iptables_output, stderr=""),
+        ]
+        controller = FirewallController(dry_run=False)
+        ips = controller.list_quarantined_ips()
+
+        assert ips == ["192.168.1.100/32", "172.28.0.55/32"]
+
+    @patch("subprocess.run")
+    def test_malformed_rule_line_does_not_crash(self, mock_run):
+        # garbage after "-s" that isn't a valid address/CIDR should be
+        # skipped, not raise or get silently treated as a real IP
+        fake_iptables_output = (
+            "-N ZT_MQTT_QUARANTINE\n"
+            "-A ZT_MQTT_QUARANTINE -s not-an-ip -j DROP\n"
+            "-A ZT_MQTT_QUARANTINE -s 10.0.0.5/32 -j DROP\n"
+        )
+        mock_run.side_effect = [
+            _mock_success(),
+            _mock_success(),
+            subprocess.CompletedProcess([], returncode=0, stdout=fake_iptables_output, stderr=""),
+        ]
+        controller = FirewallController(dry_run=False)
+        ips = controller.list_quarantined_ips()
+
+        assert ips == ["10.0.0.5/32"]
+
+    @patch("subprocess.run")
+    def test_empty_chain_returns_empty_list(self, mock_run):
+        mock_run.side_effect = [
+            _mock_success(),
+            _mock_success(),
+            subprocess.CompletedProcess([], returncode=0, stdout="-N ZT_MQTT_QUARANTINE\n", stderr=""),
+        ]
+        controller = FirewallController(dry_run=False)
+        assert controller.list_quarantined_ips() == []
+
+
 class TestQuarantineLedger:
     def test_add_and_check_entry(self, tmp_path):
         ledger_path = str(tmp_path / "ledger.json")
