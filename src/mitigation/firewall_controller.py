@@ -129,9 +129,35 @@ class FirewallController:
         ips = []
         for line in result.stdout.splitlines():
             parts = line.split()
-            if "-s" in parts:
-                idx = parts.index("-s")
-                if idx + 1 < len(parts):
-                    ips.append(parts[idx + 1])
+            if "-s" not in parts:
+                continue
+
+            idx = parts.index("-s")
+            if idx + 1 >= len(parts):
+                continue
+
+            candidate = parts[idx + 1]
+
+            # a negated source ("-s ! 10.0.0.0/24") means "match anything
+            # NOT this range" - that's not an address we quarantined, so
+            # treating it as one would be wrong (and iptables even puts
+            # the "!" as its own token before the address, which the old
+            # naive parser didn't account for at all)
+            if candidate == "!":
+                continue
+            if idx > 0 and parts[idx - 1] == "!":
+                continue
+
+            # confirm this token is actually a valid address/CIDR before
+            # trusting it - iptables -S output isn't something we control,
+            # and a malformed or unexpected token here shouldn't silently
+            # end up treated as a real quarantined host
+            try:
+                ipaddress.ip_network(candidate, strict=False)
+            except ValueError:
+                logger.debug("skipping unparseable -s value in rule: %r", candidate)
+                continue
+
+            ips.append(candidate)
 
         return ips
