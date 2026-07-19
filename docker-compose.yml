@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  broker:
+    image: eclipse-mosquitto:2.0
+    container_name: zt-mqtt-broker
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./config/mqtt_acl.conf:/mosquitto/config/acl.conf:ro
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      zt-lab:
+        ipv4_address: 172.28.0.10
+
+networks:
+  zt-lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

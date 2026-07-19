@@ -1,0 +1,28 @@
+# Defines how the mitigation controller enforces isolation once the
+# detection engine flags a client. Keeping this externalized means we
+# can tighten/loosen response behaviour without touching Python code
+# during testing.
+
+iptables:
+  chain: ZT_MQTT_QUARANTINE
+  table: filter
+  target: DROP
+  # rule is inserted at the top of the chain so it takes effect before
+  # any broader ACCEPT rules further down the default FORWARD/INPUT chain
+  insert_position: 1
+
+quarantine:
+  ledger_path: logs/quarantine_ledger.json
+  auto_expire_seconds: 1800   # release a quarantined IP after 30 min unless re-flagged
+  max_active_quarantines: 100
+
+docker_isolation:
+  enabled: false
+  network_name: zt-lab
+
+response_policy:
+  # minimum number of consecutive anomalous windows required before
+  # mitigation actually executes, to avoid overreacting to a single
+  # noisy outlier window
+  min_consecutive_flags: 2
+  dry_run: false

@@ -1,0 +1,37 @@
+# Network + capture configuration for the edge monitoring node.
+# Adjust `interface` to match whatever NIC actually sees the mirrored
+# or bridged traffic on your box - on the lab docker-compose setup
+# this is usually the bridge interface created for the zt-lab network.
+
+capture:
+  interface: docker0
+  bpf_filter: "tcp port 1883"
+  snaplen: 65535
+  promiscuous: true
+  read_timeout_ms: 100
+
+broker:
+  host: 172.28.0.10
+  port: 1883
+
+flow_tracking:
+  window_size: 20          # number of packets per rolling window, per client
+  max_tracked_clients: 500 # bound memory usage on constrained hardware
+  idle_timeout_seconds: 300
+
+detection:
+  model_path: models/isolation_forest.joblib
+  scaler_path: models/scaler.joblib
+  # empirically tuned via scripts/evaluate_detector.py threshold sweep -
+  # -0.15 (the original guess) produced 0% recall on the synthetic attack
+  # sets since actual score separation between benign and attack windows
+  # sits much closer to zero than that. see reports/evaluation_metrics.csv
+  # for the precision/recall tradeoff at nearby thresholds.
+  anomaly_threshold: -0.02
+  score_smoothing_window: 3  # majority vote over last N windows before mitigation fires
+
+logging:
+  level: INFO
+  log_file: logs/edge_node.log
+  max_bytes: 5242880
+  backup_count: 3
