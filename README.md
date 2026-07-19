@@ -226,6 +226,26 @@ MIT License. See [LICENSE](LICENSE).
 - [x] `config/`: network, MQTT ACL, and firewall rule configuration
 - [x] `scripts/evaluate_detector.py`: precision/recall/F1 evaluation against labeled synthetic traffic
 
+### 8.1 Hardening fixes from code review
+
+A closer review of `src/monitor/mqtt_sniffer.py` and `src/mitigation/firewall_controller.py`
+surfaced three real issues that a synthetic-traffic test suite alone wouldn't catch, since
+they only show up under adversarial or long-running conditions:
+
+- **Unbounded TCP reassembly buffer.** A client sending fragmented data that never completes
+  a valid MQTT frame could previously grow `_segment_buffers` without limit, risking an
+  out-of-memory crash on constrained hardware. Fixed with an 8 KB per-flow cap
+  (`MAX_SEGMENT_BUFFER_BYTES`) and a 30-second staleness timeout that evicts buffers for
+  connections that never finish. Covered by `tests/test_mqtt_sniffer.py`.
+- **Sniff loop with no timeout.** `sniff(..., timeout=None)` could block indefinitely if no
+  matching traffic arrived, with no way to detect a hung capture from outside. Changed to a
+  60-second periodic timeout inside a restart loop.
+- **iptables rule parser broke on negated/CIDR rules.** `list_quarantined_ips()` took the raw
+  token after `-s` without accounting for negated rules (`-s ! 10.0.0.0/24`), which would have
+  been misread as an actual quarantined address. Fixed to skip negated rules and validate
+  every candidate with `ipaddress.ip_network()` before including it. Covered by
+  `tests/test_mitigation.py::TestFirewallControllerListQuarantinedIps`.
+
 ## 9. Detection Performance
 
 Measured against 500 benign windows and 200 attack windows (100 brute-force, 100 malformed-flood),
